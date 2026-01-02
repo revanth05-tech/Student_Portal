@@ -48,41 +48,53 @@ if ($p = parse_db_url(getenv('MYSQL_PUBLIC_URL'))) {
     if (getenv('MYSQLPORT')) $db_port = getenv('MYSQLPORT');
 }
 
-// 3. Connect Engine
+// 3. Connect Engine (SSL Enhanced)
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 try {
-    // Initialize Object
     $conn = mysqli_init();
     
-    // Set Timout Options (Fix for 'Gone Away')
-    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
+    // Fix for "Gone Away" / Greeting Packet: Disable strict Cert check & Increase Timeout
+    if (defined('MYSQLI_OPT_SSL_VERIFY_SERVER_CERT')) {
+        $conn->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
+    }
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 20);
+    
+    // Force TCP
+    if (strpos($db_host, 'tcp://') === false) {
+        $target_host = 'tcp://' . $db_host; // Force Network Mode
+    } else {
+        $target_host = $db_host;
+    }
+    
+    // Attempt Connection with SSL Flag (Client Flag 64 or MYSQLI_CLIENT_SSL)
+    // We pass NULL for keys to use default/auto-negotiation
+    $conn->ssl_set(NULL, NULL, NULL, NULL, NULL); 
     
     // Connect
-    @$conn->real_connect($db_host, $db_user, $db_pass, $db_name, (int)$db_port);
+    $connected = @$conn->real_connect($target_host, $db_user, $db_pass, $db_name, (int)$db_port, NULL, MYSQLI_CLIENT_SSL);
     
-    if ($conn->connect_error) {
-        throw new Exception($conn->connect_error);
+    if (!$connected) {
+        // Retry without SSL if first attempt fails (Fallback)
+        $conn = mysqli_init();
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 20);
+        $conn->real_connect($target_host, $db_user, $db_pass, $db_name, (int)$db_port);
     }
 
 } catch (Exception $e) {
-    // ERROR HANDLER (Clean HTML Output)
+    // ERROR HANDLER
     $safe_host = htmlspecialchars($db_host);
     $safe_port = htmlspecialchars($db_port);
     
     die("
     <div style='font-family: sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto; border: 1px solid #ccc; border-radius: 8px; margin-top: 50px;'>
-        <h2 style='color: #de350b; margin-top: 0;'>Connection Failed</h2>
-        <p>Could not connect to database server.</p>
+        <h2 style='color: #de350b; margin-top: 0;'>Secure Connection Failed</h2>
         <div style='background: #f4f5f7; padding: 1rem; border-radius: 4px; font-family: monospace;'>
             Target: <strong>$safe_host</strong> : <strong>$safe_port</strong><br>
             Error: " . $e->getMessage() . "
         </div>
-        <p style='margin-top: 1rem; font-size: 0.9rem; color: #666;'>
-            <strong>Troubleshooting:</strong><br>
-            1. If using Railway, ensure <code>MYSQL_PUBLIC_URL</code> is set in variables.<br>
-            2. Check if the database service is running.<br>
-            3. Verify the public proxy port is correct.
+        <p style='margin-top: 1rem; color: #666;'>
+           Attempted SSL connection. Ensure 'MYSQL_PUBLIC_URL' is correct.
         </p>
     </div>
     ");
