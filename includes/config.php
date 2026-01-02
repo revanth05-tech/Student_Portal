@@ -18,21 +18,37 @@ $db_name = getenv('MYSQLDATABASE') ?: 'nrsc_portal_db';
 $db_port = getenv('MYSQLPORT') ?: 3306;
 
 // 3. AUTO-HEALING CONNECTION ENGINE
-$conn = new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT); // Throw exceptions instead of warnings
 
-if ($conn->connect_error) {
-    // Fallback: Try connecting without DB (Localhost first run scenario)
-    $conn = new mysqli($db_host, $db_user, $db_pass, "", $db_port);
-    if ($conn->connect_error) {
-        die("Connection Failed: " . $conn->connect_error);
+try {
+    // Attempt standard connection
+    $conn = new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+    
+} catch (mysqli_sql_exception $e) {
+    // If connection failed...
+    try {
+        // Fallback: Try connecting without DB (Localhost setup mode)
+        $conn = new mysqli($db_host, $db_user, $db_pass, "", $db_port);
+        
+        // Only try to create DB if on Localhost (Cloud users usually can't)
+        if ($db_host == 'localhost' || $db_host == '127.0.0.1') {
+            $conn->query("CREATE DATABASE IF NOT EXISTS $db_name");
+            $conn->select_db($db_name);
+        } else {
+            // On Cloud: If we can't connect to specific DB, it's a fatal config error
+            die("<h1>Cloud Database Error</h1><p>Could not connect to database '$db_name'. Check your Railway Variables.</p><pre>".$e->getMessage()."</pre>");
+        }
+    } catch (Exception $ex) {
+         die("<h1>Fatal Connection Error</h1><p>Please check database credentials.</p><pre>".$ex->getMessage()."</pre>");
     }
-    // Create DB if not exists
-    $conn->query("CREATE DATABASE IF NOT EXISTS $db_name");
-    $conn->select_db($db_name);
 }
 
-// ALWAYS ensure tables exist (Fix for Railway Empty DB)
-deploy_schema($conn);
+// Ensure schema exists
+try {
+    deploy_schema($conn);
+} catch (Exception $e) {
+    die("<h1>Schema Deployment Failed</h1><pre>".$e->getMessage()."</pre>");
+}
 
 // 4. Schema Deployment System
 function deploy_schema($conn) {
