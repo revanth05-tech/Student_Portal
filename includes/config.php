@@ -1,6 +1,6 @@
 <?php
 // includes/config.php
-// NRSC ENTERPRISE CORE - Version 8.0 (Persistent Connection)
+// NRSC ENTERPRISE CORE - Version 9.0 (PDO Connection)
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -13,52 +13,52 @@ $db_pass = getenv('MYSQLPASSWORD') ?: '';
 $db_name = getenv('MYSQLDATABASE') ?: 'nrsc_portal_db';
 $db_port = getenv('MYSQLPORT') ?: 3306;
 
-// If MYSQL_PUBLIC_URL exists, parse it
-if (getenv('MYSQL_PUBLIC_URL')) {
-    $url = parse_url(getenv('MYSQL_PUBLIC_URL'));
-    $db_host = $url['host'] ?? $db_host;
-    $db_user = $url['user'] ?? $db_user;
-    $db_pass = $url['pass'] ?? $db_pass;
-    $db_name = ltrim($url['path'] ?? '', '/') ?: $db_name;
-    $db_port = $url['port'] ?? 3306;
-}
-
-// Use Persistent Connection (p: prefix)
-$conn = @new mysqli('p:' . $db_host, $db_user, $db_pass, $db_name, (int)$db_port);
-
-if ($conn->connect_error) {
-    // Fallback: Try without persistent
-    $conn = @new mysqli($db_host, $db_user, $db_pass, $db_name, (int)$db_port);
-}
-
-if ($conn->connect_error) {
-    echo "<div style='font-family:sans-serif;padding:2rem;max-width:600px;margin:50px auto;border:1px solid red;background:#fff0f0;'>";
-    echo "<h2>Database Error</h2>";
-    echo "<p><b>Host:</b> " . htmlspecialchars($db_host) . "</p>";
-    echo "<p><b>Port:</b> " . htmlspecialchars($db_port) . "</p>";
-    echo "<p><b>Error:</b> " . htmlspecialchars($conn->connect_error) . "</p>";
-    echo "<hr><p>Check your MYSQL environment variables in Railway.</p>";
+// Connect using PDO
+try {
+    $dsn = "mysql:host=$db_host;port=$db_port;dbname=$db_name;charset=utf8mb4";
+    $pdo = new PDO($dsn, $db_user, $db_pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+        PDO::ATTR_TIMEOUT => 30
+    ]);
+    
+    // Create mysqli wrapper for backward compatibility
+    $conn = new mysqli($db_host, $db_user, $db_pass, $db_name, (int)$db_port);
+    
+} catch (PDOException $e) {
+    // If PDO fails, show detailed error
+    echo "<div style='font-family:sans-serif;max-width:600px;margin:50px auto;padding:20px;border:2px solid #c00;background:#fee;'>";
+    echo "<h2 style='color:#c00;margin-top:0;'>Connection Failed</h2>";
+    echo "<p><strong>Host:</strong> " . htmlspecialchars($db_host) . "</p>";
+    echo "<p><strong>Port:</strong> " . htmlspecialchars($db_port) . "</p>";
+    echo "<p><strong>Database:</strong> " . htmlspecialchars($db_name) . "</p>";
+    echo "<p><strong>Error:</strong> " . htmlspecialchars($e->getMessage()) . "</p>";
+    echo "</div>";
+    exit;
+} catch (mysqli_sql_exception $e) {
+    // mysqli fallback error
+    echo "<div style='font-family:sans-serif;max-width:600px;margin:50px auto;padding:20px;border:2px solid #c00;background:#fee;'>";
+    echo "<h2 style='color:#c00;'>mysqli Connection Error</h2>";
+    echo "<p>" . htmlspecialchars($e->getMessage()) . "</p>";
     echo "</div>";
     exit;
 }
 
-// Set longer timeout after connection
-$conn->query("SET wait_timeout=28800");
-$conn->query("SET interactive_timeout=28800");
-
 // Schema Deployment
-$check = @$conn->query("SHOW TABLES LIKE 'users'");
-if ($check && $check->num_rows == 0) {
-    $conn->multi_query("
-        CREATE TABLE users (
+try {
+    $check = $pdo->query("SHOW TABLES LIKE 'users'");
+    if ($check->rowCount() == 0) {
+        $pdo->exec("CREATE TABLE users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(50) NOT NULL UNIQUE,
             email VARCHAR(100) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             role ENUM('admin', 'student') NOT NULL DEFAULT 'student',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE student_profiles (
+        )");
+        
+        $pdo->exec("CREATE TABLE student_profiles (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NOT NULL UNIQUE,
             full_name VARCHAR(100) NOT NULL,
@@ -72,12 +72,13 @@ if ($check && $check->num_rows == 0) {
             profile_pic VARCHAR(255) DEFAULT 'default.png',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-    ");
-    while ($conn->next_result()) {;}
-    
-    $admin_pass = password_hash('admin', PASSWORD_DEFAULT);
-    $conn->query("INSERT INTO users (username, email, password, role) VALUES ('admin', 'admin@nrsc.gov.in', '$admin_pass', 'admin')");
+        )");
+        
+        $admin_pass = password_hash('admin', PASSWORD_DEFAULT);
+        $pdo->exec("INSERT INTO users (username, email, password, role) VALUES ('admin', 'admin@nrsc.gov.in', '$admin_pass', 'admin')");
+    }
+} catch (Exception $e) {
+    // Silent on schema errors
 }
 
 function sanitize($conn, $input) {
