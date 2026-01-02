@@ -9,21 +9,22 @@ if (!extension_loaded('mysqli')) {
 }
 
 $host = getenv('MYSQLHOST');
-$user = getenv('MYSQLUSER');
-$pass = getenv('MYSQLPASSWORD');
-$name = getenv('MYSQLDATABASE');
-$port = getenv('MYSQLPORT');
 
-echo "<p>Checking Environment Variables...</p>";
+echo "<h3>Available Environment Variables:</h3>";
 echo "<pre>";
-echo "HOST: $host\n";
-echo "USER: $user\n";
-echo "NAME: $name\n";
-echo "PORT: $port\n";
+foreach ($_SERVER as $key => $value) {
+    if (strpos($key, 'MYSQL') !== false || strpos($key, 'DB') !== false || strpos($key, 'RAILWAY') !== false) {
+        // Obfuscate the value for safety in the screenshot
+        $len = strlen($value);
+        $masked = $len > 4 ? substr($value, 0, 4) . '...' : '****';
+        echo "$key = $masked\n";
+    }
+}
 echo "</pre>";
 
 if (!$host) {
-    die("❌ Error: Railway Environment Variables are missing. Did you add the MySQL Service?");
+     // Don't die yet, let them see the list above
+    echo "<h2 style='color:orange'>Warning: MYSQLHOST is empty. See list above for correct names.</h2>";
 }
 
 echo "<p>Attempting Connection...</p>";
